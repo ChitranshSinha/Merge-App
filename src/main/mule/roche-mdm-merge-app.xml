@@ -1,0 +1,555 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:validation="http://www.mulesoft.org/schema/mule/validation" xmlns:anypoint-mq="http://www.mulesoft.org/schema/mule/anypoint-mq"
+	xmlns:sftp="http://www.mulesoft.org/schema/mule/sftp"
+	xmlns:file="http://www.mulesoft.org/schema/mule/file" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+http://www.mulesoft.org/schema/mule/sftp http://www.mulesoft.org/schema/mule/sftp/current/mule-sftp.xsd
+http://www.mulesoft.org/schema/mule/anypoint-mq http://www.mulesoft.org/schema/mule/anypoint-mq/current/mule-anypoint-mq.xsd
+http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd">
+	<file:config name="File_Config" doc:name="File Config" doc:id="c9b05bc9-8c38-4ebd-9cd0-ebecf80ef748" />
+	<sftp:config name="SFTP_Config" doc:name="SFTP Config" doc:id="504bf5be-4f06-45b3-8ae8-855a658482a9" >
+		<sftp:connection host="${sftp.host}" username="${sftp.user}" password="${sftp.password}" port="${sftp.port}" workingDir="${sftp.basepath}" connectionTimeoutUnit="MINUTES" connectionTimeout="${sftp.ConnectionTimeoutInMin}" responseTimeoutUnit="MINUTES" responseTimeout="${sftp.ResponseTimeoutInMin}">
+			<reconnection >
+				<reconnect frequency="${sftp.ReconnectionFrequencyInms}" />
+			</reconnection>
+		</sftp:connection>
+	</sftp:config>
+	<anypoint-mq:config name="Anypoint_MQ_Config" doc:name="Anypoint MQ Config" doc:id="36381d7d-305e-465b-95f5-0c15ea70f9be" >
+		<anypoint-mq:connection url="${mq.URL}" clientId="${mq.id}" clientSecret="${mq.secret}" />
+	</anypoint-mq:config>
+	<http:request-config name="CFG_SYS_API_HTTPS" doc:name="HTTP Request configuration" doc:id="96b8921a-ac69-41a9-85d3-bfa291497f32" basePath="/api">
+		<http:request-connection host="${cfg.host}" port="${cfg.port}" protocol="HTTPS">
+			<http:authentication >
+				<http:basic-authentication username="${cfg.client_id}" password="${cfg.client_secret}" />
+			</http:authentication>
+		</http:request-connection>
+	</http:request-config>
+	<http:request-config name="ERS_API_HTTPS" doc:name="HTTP Request configuration" doc:id="f873ae7f-12bb-44d9-ab1a-57667b511d82" basePath="/api" >
+		<http:request-connection protocol="HTTPS" host="#[vars.varERSHost]">
+			<reconnection >
+				<reconnect />
+			</reconnection>
+			<http:authentication >
+				<http:basic-authentication username="#[vars.varERSCred.clientId]" password="#[vars.varERSCred.clientSecret]"/>
+			</http:authentication>
+		</http:request-connection>
+	</http:request-config>
+	<validation:config name="Validation_Config" doc:name="Validation Config" doc:id="8920e6b4-e3e6-4af9-a106-3ba940e51061" />
+	<configuration-properties doc:name="Configuration properties" doc:id="b49447b8-8550-458a-873d-c97a3223abe2" file="roche-mdm-merge-app.properties" />
+	<flow name="roche-mdm-merge-app" doc:id="e12f6bc4-74b1-46ac-a66e-f3326a886a61" >
+		<scheduler doc:name="Scheduler" doc:id="74c01b22-5ade-443a-bf2a-bae5993c55db" >
+			<scheduling-strategy >
+				<fixed-frequency frequency="45" timeUnit="DAYS" startDelay="1"/>
+			</scheduling-strategy>
+		</scheduler>
+		<sftp:list doc:name="List File Names" doc:id="07995aad-886d-4ec8-84ae-e8ea9c1f6c77" config-ref="SFTP_Config" directoryPath="#[p('sftp.input')]" >
+			<sftp:matcher filenamePattern="*.dat" />
+		</sftp:list>
+		<ee:transform doc:name="Get FileNames" doc:id="93f13e01-445b-4c44-84db-b4140fcb2c7b">
+			<ee:message>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="varsFileName"><![CDATA[%dw 2.0
+output application/json
+
+---
+payload.attributes.fileName[0]]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<choice doc:name="Files Existance Check" doc:id="15f12b64-6532-47cf-80bb-bb89cc107177" >
+			<when expression="#[(vars.varsFileName default &quot;&quot;  contains &quot;.dat&quot; ) and (vars.varsFileName default &quot;&quot;   contains p('EnvName'))]" >
+				<logger level="INFO" doc:name="Filename" doc:id="5e7dbaf5-bdbd-4673-908b-c4813610a8ae" message="FileName is #[vars.varsFileName] " />
+				<flow-ref doc:name="MergeApp" doc:id="84a9d136-eba8-477b-97f5-bbd6e7e6b3cf" name="merge-app-main-flow" />
+			</when>
+			<when expression="#[(vars.varsFileName default &quot;&quot;  contains &quot;.dat&quot; ) and not (vars.varsFileName default &quot;&quot;   contains p('EnvName'))]">
+				<logger level="INFO" doc:name="different-Filename" doc:id="deae92a1-67bd-4049-85dd-c8b2fe0c15bb" message="#[%dw 2.0
+output application/json
+---
+vars.varsFileName  ++ &quot; is not a valid Filename for this tenant.It should contain &quot; ++ p('EnvName') ++ &quot; in the name.Moving this file to &quot; ++ p('sftp.archive')]"/>
+				<sftp:move doc:name="Move" doc:id="6a4f9880-b91d-4c3f-80a4-4a9d29d8c8fa" config-ref="SFTP_Config" sourcePath="#[p('sftp.input') ++ &quot;/&quot; ++ vars.varsFileName]" targetPath="#[p('sftp.archive')]" renameTo="#['WrongFileName_noAction' ++ ( now() as String{format:'yyyy-MM-dd-hh-mm-ss'}) ++ (random() * 1000 as String) ++ &quot;_&quot; ++ vars.varsFileName]"/>
+			</when>
+			<otherwise >
+				<logger level="INFO" doc:name="No-Input-Files-To-Process " doc:id="665e9047-83a8-45c9-9509-b0282216e900" message="No-Input-Files-To-Process" />
+			</otherwise>
+		</choice>
+	</flow>
+	<flow name="merge-app-main-flow" doc:id="80cb2b4e-273d-4939-91a9-b56104473ffe" doc:description="App will read only .dat file which is expected to be a pipe seperated data file.
+
+vars.inputPayload = json , which has the input .dat file in json format containing   " maxConcurrency="5">
+		<logger level="INFO" doc:name="Roche-mdm-merge-app starte" doc:id="7ba9df6b-9bfa-4eb4-84c1-b6712321bc9b" message="Roche-mdm-merge-app started at #[now()]" />
+		<sftp:read doc:name="Read File" doc:id="10b9bf57-0505-4658-b463-cebd5f263624" config-ref="SFTP_Config" path="#[p('sftp.input') ++ &quot;/&quot; ++ vars.varsFileName]"/>
+		<ee:transform doc:name="payload to Json &amp; uuid" doc:id="d0a36404-9112-403c-8a4c-44d43186d822" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+input payload application/csv separator='|'
+---
+read(payload,'application/csv',{separator:'|'})]]></ee:set-payload>
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="UUID" ><![CDATA[uuid()]]></ee:set-variable>
+				<ee:set-variable variableName="fileName" ><![CDATA[%dw 2.0
+output application/java
+---
+attributes.fileName]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<ee:transform doc:name="inputData in Json" doc:id="ad0389e1-d004-4d75-a9fc-1ed43d501afb" >
+			<ee:message />
+			<ee:variables >
+				<ee:set-variable variableName="inputData" ><![CDATA[%dw 2.0
+output application/json
+fun mergeID(data,system_code) = (data splitBy("/"))[3] ++ system_code ++ "#" ++ (data splitBy("/"))[1] ++ system_code
+---
+payload map(value,index) -> {
+	
+	Serial_Number:index+1,
+	WINNER_ID: value.WINNER_ID  ,
+	LOSER_ID: value.LOSER_ID ,
+	MERGE_ID : mergeID(value.MERGE_ID , value.SUFFIX default p('mdm.systemCode') ),
+	TARGET_SYSTEM:value.TARGET_SYSTEM,
+	ENTITY_TYPE: if (upper(value.ENTITY_TYPE)=="HCP" ) "INDIVIDUAL"
+					else if (upper(value.ENTITY_TYPE)=="HCO" ) "ORGANIZATION"
+					else if (upper(value.ENTITY_TYPE)=="ORGANIZATION") "ORGANIZATION"
+					else value.ENTITY_TYPE ,
+	SYSTEM_CODE: value.SUFFIX default p('mdm.systemCode'),
+	COUNTRY_CODE:value.COUNTRY default p('CountryCode')	
+}]]></ee:set-variable>
+				<ee:set-variable variableName="inputPayload" ><![CDATA[%dw 2.0
+output application/json
+---
+[]]]></ee:set-variable>
+				<ee:set-variable variableName="ERS_body" ><![CDATA[%dw 2.0
+output application/json
+---
+[]]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<foreach doc:name="For Each" doc:id="207c889e-9596-4623-8b0f-f0049b88c52a" collection="#[vars.inputData]">
+			<try doc:name="Try" doc:id="ed3bb18a-65c1-4d98-b52f-05268410c7ca" >
+				<validation:is-not-blank-string doc:name="WINNER_ID not blank" doc:id="4a69e239-e38b-4ce2-9fbc-427a819e2870" value="#[payload.WINNER_ID]"/>
+				<validation:is-not-blank-string doc:name="LOSER_ID not blank" doc:id="3b7b71ae-a945-4593-a049-8988c73ef156" value="#[payload.LOSER_ID]"/>
+				<choice doc:name="check WINNER_ID = LOSER_ID" doc:id="34c48f27-a044-40bd-ac43-97e74a239cbb">
+				<when expression="#[(payload.WINNER_ID != payload.LOSER_ID)]">
+					<ee:transform doc:name="construct ERS lookup body" doc:id="507d9fc3-35e2-4610-bec5-1e767914821e">
+						<ee:message />
+						<ee:variables>
+							<ee:set-variable variableName="inputPayload"><![CDATA[%dw 2.0
+output application/json
+---
+flatten(vars.*inputPayload ++ [payload])]]></ee:set-variable>
+								<ee:set-variable variableName="ERS_body_1" ><![CDATA[%dw 2.0
+output application/json
+---
+[vars.inputData map (winner,i1) -> {
+	"entityId": winner.WINNER_ID ++ p('mdm.systemCode'),
+	"entityName": "INDIVIDUAL",
+	"systemName": "RELTIOMDM"
+},
+vars.inputData map (loser,i2) ->{
+	"entityId": loser.LOSER_ID ++  p('mdm.systemCode') ,
+	"entityName": "INDIVIDUAL",
+	"systemName": "RELTIOMDM"
+},
+vars.inputData map (merge,i3) -> {
+	"entityId": merge.MERGE_ID,
+	"entityName": "MERGEIDENTIFIER",
+	"systemName": "RELTIOMDM"
+}] reduce ($ ++ $$)
+]]></ee:set-variable>
+								<ee:set-variable variableName="ERS_body" ><![CDATA[%dw 2.0
+output application/json
+var system_code = payload.SYSTEM_CODE   default p('mdm.systemCode')
+---
+[ {
+	"entityId": payload.WINNER_ID ++ system_code,
+	"entityName": payload.ENTITY_TYPE ,
+	"systemName": "RELTIOMDM"
+},
+{
+	"entityId": payload.LOSER_ID ++  system_code ,
+	"entityName": payload.ENTITY_TYPE,
+	"systemName": "RELTIOMDM"
+},
+{
+	"entityId": payload.MERGE_ID,
+	"entityName": "MERGEIDENTIFIER",
+	"systemName": "RELTIOMDM"
+}] ++ vars.ERS_body
+]]></ee:set-variable>
+						</ee:variables>
+					</ee:transform>
+				</when>
+				<otherwise>
+					<logger level="INFO" doc:name="WINNER_ID = LOSER_ID " doc:id="f396d275-60a7-40f7-84f9-a649e0f838be" message="WINNER_ID = LOSER_ID  is #[payload.WINNER_ID] at  #[vars.counter] , hence not adding this ERS Lookup input body and MQ push ." />
+				</otherwise>
+			</choice>
+				<error-handler >
+					<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="b6056116-c554-4ddd-98ce-d0742621dcb4" >
+						<logger level="INFO" doc:name="Logger" doc:id="c01a7a73-0961-424f-aef9-89dbe209783f" message='#[%dw 2.0
+output application/json
+---
+{
+	"message": if ( payload.WINNER_ID == "" ) ("WINNER_ID is null") else ("LOSER_ID is null"),
+	"location": vars.counter
+}]'/>
+					</on-error-continue>
+				</error-handler>
+			</try>
+		</foreach>
+		<validation:is-not-empty-collection doc:name="Is not empty collection" doc:id="eb972afc-1d59-4ae5-90d7-754b582cd9bd" config-ref="Validation_Config" values="#[vars.ERS_body]" message='Empty ERS body due to same WINNER_ID and LOSER_ID ,hence terminating'/>
+		<flow-ref doc:name="CFG-SYS-CALL" doc:id="5e1fc091-c875-4778-b2e3-6358a36ee2c1" name="CFG-SYS-CALL"/>
+		<ee:transform doc:name="ERS_body and varERSPath" doc:id="596c4532-5a77-442b-9591-b9e6e47cdeb4" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+vars.ERS_body]]></ee:set-payload>
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="varERSPath" ><![CDATA[%dw 2.0
+output application/json
+---
+"/lookup-ids"]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<flow-ref doc:name="ERS-API-CALL" doc:id="e233bf92-ebcb-40f1-ac7d-025fdd78d637" name="ERS-API-CALL"/>
+		<flow-ref doc:name="Resolve missing MERGEIDENTIFIERS" doc:id="aea7937c-4424-4032-87c3-0db7fd8c8ad7" name="Resolve-Missing-MergeIdentifier"/>
+		<ee:transform doc:name="ERS body and path" doc:id="9bb7c60c-8a14-4cea-8b15-cabe07e67b4e" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+vars.inputPayload]]></ee:set-payload>
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="varERSPath" ><![CDATA[%dw 2.0
+output application/json
+---
+"/lookup-ids"]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<flow-ref doc:name="ERS-API-CALL" doc:id="111a76fa-237e-456d-a0b5-fe6469a7d44d" name="ERS-API-CALL"/>
+		<ee:transform doc:name="ERS_lookup_output" doc:id="e62335f0-f32d-475f-97f9-28e4bc9decac" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="ERS_lookup_output" ><![CDATA[%dw 2.0
+output application/json
+---
+ (payload.RELTIOMDM pluck (value,key,index) -> 
+ {
+ 	entities : value pluck (value1,key,index) ->
+ 	{
+ 		entityId : key,
+ 		LexiID : value1[0]
+ 	}
+ }.entities) reduce ($ ++ $$)
+]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<foreach doc:name="For Each" doc:id="4223a47c-bfff-4f7a-9ec4-5e7eab1fe5b9" collection="#[vars.inputPayload]">
+			<choice doc:name="LexiID of WINNER_ID and LOSER_ID present" doc:id="726784ee-b92a-43c3-a4fb-58673f32eff2" >
+				<when expression="#[((vars.ERS_lookup_output filter($.entityId == (payload.WINNER_ID ++ p('mdm.systemCode'))))[0].LexiID != null ) and ((vars.ERS_lookup_output filter($.entityId == (payload.LOSER_ID ++ p('mdm.systemCode'))))[0].LexiID != null )]">
+					<choice doc:name="check TARGET_SYSTEM" doc:id="81cfcc92-1ba6-407e-b8e2-ddc4cb8bca59">
+						<when expression='payload.TARGET_SYSTEM == "" or payload.TARGET_SYSTEM == null'>
+							<logger level="INFO" doc:name="TARGET_SYSTEM is blank" doc:id="bd8b3c04-0a6f-4b4c-b896-4dcf69a782af" message="TARGET_SYSTEM is blank ,hence sending to  both SFDCSALES and ORGMGR."/>
+							<ee:transform doc:name="Construct MQ message" doc:id="13bee6a5-a6e3-4ec4-9ff2-f65923e48080" >
+								<ee:message >
+									<ee:set-payload ><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/json
+//fun getLexiID(id) =(vars.ERS_lookup_output filter($.entityId == id)).lexiID[0]
+fun getLexiID(id)=((vars.ERS_lookup_output filter($.entityId == id))[0]).LexiID
+var curr_uuid =  uuid()
+var curr_date = now()
+var system_code = payload.SYSTEM_CODE
+---
+{
+	
+	"transactionId": vars.UUID,
+	"tenantId": p('tenantId'),
+	"jobId": curr_uuid,
+	"entityDomainCode": "MRGERQST",
+	"sourceCode": "RELTIOMDM",
+	"fetchPayloadFromSource": false,
+	"idlFlag": 0,
+	"sourceName": system_code replace "#" with ("")  default system_code, 
+	"entityType": "MERGE",
+	"entities": [{
+		"entityId": payload.WINNER_ID ++  system_code ,
+		"entity": {
+			"MergeRequestIdentifier": curr_uuid,
+			"Entity": payload.ENTITY_TYPE,
+			"MergeDate": curr_date,
+			"MergeWinner": {
+				"MergeWinnerIdentifier": getLexiID((payload.WINNER_ID ++  system_code)),
+				"MasterMergeWinnerIdentifier" : payload.WINNER_ID ++ system_code  ,
+				"ClientMergeWinnerIdentifier": payload.WINNER_ID ++ system_code ,
+				"CountryCode": payload.COUNTRY_CODE,
+				"Crosswalks": [{
+					"SourceSystemCode": system_code replace "#" with (""),
+					"SourceIdentifier": "",
+					"CreateDate": curr_date
+				},{
+					"SourceSystemCode": system_code replace "#" with (""),
+					"SourceIdentifier": "",
+					"CreateDate": curr_date
+				}],
+				"SubscriptionFlags": {
+					"SubscriptionFlag1": true
+				}
+			},
+			"MergeLoser": [{
+				"MergeLoserIdentifier": getLexiID((payload.LOSER_ID ++ system_code)),
+				"CountryCode": payload.COUNTRY_CODE,
+				"MasterMergeLoserIdentifier" : payload.LOSER_ID ++ system_code  ,
+				"ClientMergeLoserIdentifier": payload.LOSER_ID ++ system_code
+			}]
+		}
+	}]
+} 	]]></ee:set-payload>
+								</ee:message>
+							</ee:transform>
+						    <anypoint-mq:publish doc:name="Publish" doc:id="58c35677-ec2a-43cc-9f75-93c5624b436b" config-ref="Anypoint_MQ_Config" destination="#[p('mq.destination')]" />   
+							<logger level="INFO" doc:name="messageId and transactionId" doc:id="afb4187b-bddf-4cd3-8b96-180a9dd0cd0b" message="Message pushed to MQ to both SFDCSALES and ORGMGR. messageId is #[attributes.messageId] and  transactionId is  #[vars.UUID]" />
+						</when>
+						<when expression='#[(upper(payload.TARGET_SYSTEM)=="SFDCSALES") or (upper(payload.TARGET_SYSTEM)=="ORGMGR")]'>
+							<logger level="INFO" doc:name="TARGET_SYSTEM" doc:id="e61fec9f-e350-4b01-9714-8fb009782115" message="Sending  to  #[payload.TARGET_SYSTEM]" />
+							<ee:transform doc:name="Construct MQ message" doc:id="baf58b55-950e-41c3-a4be-4c935196ce15">
+						<ee:message>
+							<ee:set-payload><![CDATA[%dw 2.0
+import * from dw::core::Strings
+output application/json
+//fun getLexiID(id) =(vars.ERS_lookup_output filter($.entityId == id)).lexiID[0]
+fun getLexiID(id)=((vars.ERS_lookup_output filter($.entityId == id))[0]).LexiID
+var curr_uuid =  uuid()
+var curr_date = now()
+var system_code = payload.SYSTEM_CODE
+---
+{
+	"targetCode": if ( payload.TARGET_SYSTEM != "" ) (upper(payload.TARGET_SYSTEM)) else Null,
+	"transactionId": vars.UUID,
+	"tenantId": p('tenantId'),
+	"jobId": curr_uuid,
+	"entityDomainCode": "MRGERQST",
+	"sourceCode": "RELTIOMDM",
+	"fetchPayloadFromSource": false,
+	"idlFlag": 0,
+	"sourceName": system_code  replace "#" with ("")  default system_code , 
+	"entityType": "MERGE",
+	"entities": [{
+		"entityId": payload.WINNER_ID ++  system_code ,
+		"entity": {
+			"MergeRequestIdentifier": curr_uuid,
+			"Entity": payload.ENTITY_TYPE,
+			"MergeDate": curr_date,
+			"MergeWinner": {
+				"MergeWinnerIdentifier": getLexiID((payload.WINNER_ID ++  system_code)),
+				"MasterMergeWinnerIdentifier" : payload.WINNER_ID ++ system_code  ,
+				"ClientMergeWinnerIdentifier": payload.WINNER_ID ++ system_code,		
+				"CountryCode": payload.COUNTRY_CODE,
+				"Crosswalks": [{
+					"SourceSystemCode": system_code replace "#" with (""),
+					"SourceIdentifier": "",
+					"CreateDate": curr_date
+				},{
+					"SourceSystemCode": system_code replace "#" with (""),
+					"SourceIdentifier": "",
+					"CreateDate": curr_date
+				}],
+				"SubscriptionFlags": {
+					"SubscriptionFlag1": true
+				}
+			},
+			"MergeLoser": [{
+				"MergeLoserIdentifier": getLexiID((payload.LOSER_ID ++ system_code)),
+				"CountryCode": payload.COUNTRY_CODE,
+				"MasterMergeLoserIdentifier" : payload.LOSER_ID ++ system_code  ,
+				"ClientMergeLoserIdentifier": payload.LOSER_ID ++ system_code
+			}]
+		}
+	}]
+} 	]]></ee:set-payload>
+						</ee:message>
+					</ee:transform>
+							<anypoint-mq:publish doc:name="Publish" doc:id="fd1b07a5-0d2e-4a4a-b4ec-ea0f8ec96d33" config-ref="Anypoint_MQ_Config" destination="#[p('mq.destination')]" />  
+							<logger level="INFO" doc:name="messageId and transactionId" doc:id="096a3e5e-6fb5-4c1f-96d7-d58ac68738ea" message="messageId is #[attributes.messageId] and  transactionId is  #[vars.UUID]" />
+						</when>
+						<otherwise>
+							<logger level="INFO" doc:name="Default Logger" doc:id="82a8501e-4c2e-4c2f-9f48-4ece41ed9048" message="target system is  #[payload.TARGET_SYSTEM]  which is INVALID ."/>
+						</otherwise>
+					</choice>
+					<!-- <file:write doc:name="write to local file" doc:id="a21fbdef-7a87-44da-8b69-a3eb245c077d" config-ref="File_Config" path="#['C:\Users\csinha\Downloads\Mule4\output\data-merge_'++ ( now() as String{format:'yyyy-MM-dd-hh-mm-ss'}) ++ (random() * 1000) ++ &quot;_&quot; ++ vars.fileName ++ &quot;_&quot; ++ vars.counter as String ++ '.json']" mode="CREATE_NEW" />  -->
+				<!--  	<flow-ref doc:name="Flow Reference" doc:id="21fb1d43-751d-4432-96f6-882b8fae3546" name="MQ-consume"/> -->
+				</when>
+				<otherwise >
+					<logger level="INFO" doc:name="Incomplete/Missing details" doc:id="8a88fa69-d868-45fd-a506-2827a8157dab" message="#[%dw 2.0
+output application/json
+---
+{
+	&quot;message&quot; : &quot; Null LexiId found for INDIVIDUAL entity , hence not pushing to MQ&quot;,
+     &quot;LexiId missing&quot;: if ((vars.ERS_lookup_output filter($.entityId == (payload.WINNER_ID ++ p('mdm.systemCode'))))[0].LexiID == null ) &quot;WINNER_ID&quot; else &quot;LOSER_ID&quot; ,
+	&quot;entity&quot;  : if ((vars.ERS_lookup_output filter($.entityId == (payload.WINNER_ID ++ p('mdm.systemCode'))))[0].LexiID == null ) payload.WINNER_ID else payload.LOSER_ID
+}]"/>
+				</otherwise>
+			</choice>
+		</foreach>
+		<sftp:move doc:name="Move" doc:id="71c36a21-7511-49cc-8dcb-ba6ae7f12dea" config-ref="SFTP_Config" renameTo="#['mergedFile' ++ ( now() as String{format:'yyyy-MM-dd-hh-mm-ss'}) ++ (random() * 1000 as String) ++ &quot;_&quot; ++ vars.varsFileName]" targetPath="#[p('sftp.archive')]" sourcePath="#[p('sftp.input') ++ &quot;/&quot; ++ vars.varsFileName]" />
+		<logger level="INFO" doc:name="MergeApp Flow completed" doc:id="327db757-97dd-424c-92f9-01d767b10418" message="MergeApp Flow completed" />
+	</flow>
+	<flow name="CFG-SYS-CALL" doc:id="d0d97b0f-5473-426d-b9b9-f80dee7813e5">
+		<logger level="INFO" doc:name="CFG API Call started" doc:id="475bb094-6354-44fb-ba58-b49b1bd05b3c" message='#["CFG SYS API call start"]' />
+		<http:request method="GET" doc:name="CFG_SYS_API_CALL" doc:id="729086bd-590a-4390-b495-d2e11edd7d34" config-ref="CFG_SYS_API_HTTPS" path="/getSystems">
+			<http:query-params><![CDATA[#[output application/java
+---
+{
+	entityType : 'Product',
+	tenantId : p('tenantId'),
+	entityDomainCode : 'PROD',
+	sourceSystemCode : 'ORGMGR'
+}]]]></http:query-params>
+		</http:request>
+		<ee:transform doc:name="Constructing ERS Confg details" doc:id="f3d38c77-3f72-4dd1-980c-ad019cdbc5b0">
+			<ee:message />
+			<ee:variables>
+				<ee:set-variable variableName="varERSCredentials"><![CDATA[%dw 2.0
+output application/json
+---
+payload.source.ers.credentials]]></ee:set-variable>
+				<ee:set-variable variableName="varOMcred"><![CDATA[%dw 2.0
+output application/json
+---
+(payload.source.systemExternal.credentials) reduce $]]></ee:set-variable>
+				<ee:set-variable variableName="varCLScred"><![CDATA[%dw 2.0
+output application/json
+---
+payload.source.cls.credentials]]></ee:set-variable>
+				<ee:set-variable variableName="varERSHost"><![CDATA[%dw 2.0
+output application/json
+---
+payload.source.ers.host]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<ee:transform doc:name="Decoding ERS Credentials" doc:id="fc98b1b6-77d3-4051-863b-afbd95532de1">
+			<ee:message />
+			<ee:variables>
+				<ee:set-variable variableName="varERScred"><![CDATA[%dw 2.0
+import * from dw::core::Binaries
+output application/json
+---
+read(fromBase64(vars.varERSCredentials), 'application/json')]]></ee:set-variable>
+				<ee:set-variable variableName="varOMclientSecret"><![CDATA[%dw 2.0
+import * from dw::core::Binaries
+output application/json
+---
+read(fromBase64(vars.varOMcred), 'application/json').clientSecret]]></ee:set-variable>
+				<ee:set-variable variableName="varOMclientID"><![CDATA[%dw 2.0
+import * from dw::core::Binaries
+output application/json
+---
+read(fromBase64(vars.varOMcred), 'application/json').clientId]]></ee:set-variable>
+				<ee:set-variable variableName="varCLSclientSecret"><![CDATA[%dw 2.0
+import * from dw::core::Binaries
+output application/json
+---
+read(fromBase64(vars.varCLScred), 'application/json').clientSecret]]></ee:set-variable>
+				<ee:set-variable variableName="varCLSclientId"><![CDATA[%dw 2.0
+import * from dw::core::Binaries
+output application/json
+---
+read(fromBase64(vars.varCLScred), 'application/json').clientId]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<logger level="INFO" doc:name="CFG API Call Ended" doc:id="6b44c26b-3f20-4b2e-9647-ff8842e7ada0" message='#["CFG API Call Ended"]' />
+		<error-handler>
+			<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" doc:id="dc9f2bf4-b3f4-4aaf-bb15-1d9c0fc7d9d3">
+				<logger level="INFO" doc:name="Logger" doc:id="2327d925-f702-4ee0-a7bb-bba4b8ab564c" message='#[%dw 2.0
+output application/json
+---
+{
+	payload: payload,
+	error_description: error.description,
+	flow: "CFG-SYS-CALL"
+}]' />
+			</on-error-propagate>
+		</error-handler>
+	</flow>
+	<flow name="ERS-API-CALL" doc:id="756a862b-feda-4349-be0e-4fa4599eeed5">
+		<logger level="INFO" doc:name="ERS call Start" doc:id="6f1115b0-db70-479a-8549-197ab500264a" message="ERS #[vars.varERSPath] call start" />
+		<http:request method="POST" doc:name="ERS API CALL" doc:id="5ec6a257-d492-40f5-af64-1dc1581dd701" config-ref="ERS_API_HTTPS" path="#[vars.varERSPath]">
+			<http:body><![CDATA[#[output application/json
+---
+vars.ERS_body]]]></http:body>
+			<http:query-params><![CDATA[#[output application/java
+---
+{
+	"tenantId" : p('tenantId')
+}]]]></http:query-params>
+		</http:request>
+		<logger level="INFO" doc:name="ERS call End" doc:id="3538dd67-3f89-4ba4-8aad-66eb84141583" message="ERS #[vars.varERSPath]  call end" />
+		<error-handler>
+			<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" doc:id="82aa32d7-adc9-402e-b894-3520c41dbdd4">
+				<logger level="INFO" doc:name="Logger" doc:id="7838db0b-7e8d-488f-8e3c-4077f2eee081" message='#[%dw 2.0
+output application/json
+---
+{
+	payload: payload,
+	error_description: error.description,
+	flow: "ers-api-call"
+}]' />
+			</on-error-propagate>
+		</error-handler>
+	</flow>
+	<sub-flow name="Resolve-Missing-MergeIdentifier" doc:id="2f4b33ff-37e1-49d1-8305-edd8df0c25f1" >
+		<logger level="INFO" doc:name="START" doc:id="7749b550-2b47-4852-9a9f-4cc9e6e2e348" message="==========RESOLVE MISSING MERGEIDENTIFIER starts  =============="/>
+		<ee:transform doc:name="Modify ERS Output" doc:id="c3dca1bd-9424-4b37-8c75-47976f3f18d4" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="nullMergeIdentifier" ><![CDATA[%dw 2.0
+output application/json
+---
+((payload.RELTIOMDM.MERGEIDENTIFIER pluck (value,key ) ->
+{
+	entityID : key ,
+	LexiId : value[0]
+}) filter $.LexiId == null ).entityID]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<choice doc:name="Choice" doc:id="0e6b390f-031d-4eed-8e7d-24f62a7c2e6b" >
+			<when expression="#[vars.nullMergeIdentifier != null]">
+				<ee:transform doc:name="nullMergeIdentifier body and ERSPath" doc:id="a59955c3-3ada-4649-8bd6-1026a30e68ad">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+vars.nullMergeIdentifier map (data,index) ->
+{
+	"entityId": data,
+    "entityName": "MERGEIDENTIFIER",
+    "systemName": "RELTIOMDM"
+}]]></ee:set-payload>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="varERSPath"><![CDATA[%dw 2.0
+output application/json
+---
+"/resolve-ids"]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+				<logger level="INFO" doc:name="Logger" doc:id="9aa2bd34-b7a1-4bae-be65-39813de8f143" message="resolve-ids ERS api will be called for these  MERGEIDENTIFIERS which dont have LexiId #[vars.nullMergeIdentifier]  with payload body as   #[payload]" />
+				<flow-ref doc:name="Flow Reference" doc:id="29ac85db-5413-402a-8a85-00c5fefd384e" name="ERS-API-CALL"/>
+			</when>
+			<otherwise >
+				<logger level="INFO" doc:name="default logger" doc:id="5deca0df-a0bd-48ac-b740-3dda2b08fa06" message="#[&quot;Default-No-ERS-Resolve-Call-to-Make  : &quot; ++ &quot;tenantId : &quot; ++ p('tenantId') ++ &quot;, JobId : &quot; ++ vars.uuid]"/>
+			</otherwise>
+		</choice>
+		<logger level="INFO" doc:name="END" doc:id="9adb705e-10e0-42fd-93df-3dc9bfc373c6" message="==========RESOLVE MISSING MERGEIDENTIFIER ends  =============="/>
+	</sub-flow>
+</mule>
+
+
